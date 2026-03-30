@@ -3,7 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\MasterItem;
+use App\Models\Category;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use App\Exports\MasterItemsExport;
+use Maatwebsite\Excel\Facades\Excel;
 
 class MasterItemsController extends Controller
 {
@@ -19,16 +23,36 @@ class MasterItemsController extends Controller
         $hargamin = $request->hargamin;
         $hargamax = $request->hargamax;
 
-        $data_search = MasterItem::query();
+        $data_search = MasterItem::with('categories'); // eager load categories
 
-        if (!empty($kode)) $data_search = $data_search->where('kode', $kode);
-        if (!empty($nama)) $data_search = $data_search->where('nama', 'LIKE', '%' . $nama . '%');
-        if (!empty($hargamin)) $data_search = $data_search->where('harga_beli', '>=', $hargamin)->where('harga_beli', '<=', $hargamax);
+        if (!empty($kode)) {
+            $data_search->where('kode', $kode);
+        }
 
-        $data_search = $data_search->select('kode', 'nama', 'jenis', 'harga_beli', 'laba', 'supplier')->orderBy('id')->get();
+        if (!empty($nama)) {
+            $data_search->where('nama', 'LIKE', '%' . $nama . '%');
+        }
 
+        if (!empty($hargamin)) {
+            $data_search->where('harga_beli', '>=', $hargamin);
+        }
 
-        return json_encode([
+        if (!empty($hargamax)) {
+            $data_search->where('harga_beli', '<=', $hargamax);
+        }
+
+        $data_search = $data_search
+            ->select('id', 'kode', 'nama', 'jenis', 'harga_beli', 'laba', 'supplier', 'gambar')
+            ->orderBy('id')
+            ->get();
+
+        // Tambahkan kolom kategori sebagai string
+        $data_search->transform(function($item) {
+            $item->kategori_list = $item->categories->pluck('nama')->implode(', ');
+            return $item;
+        });
+
+        return response()->json([
             'status' => 200,
             'data' => $data_search
         ]);
@@ -36,14 +60,19 @@ class MasterItemsController extends Controller
 
     public function formView($method, $id = 0)
     {
-        if ($method == 'new') {
-            $item = [];
-        } else {
-            $item = MasterItem::find($id);
-        }
-        $data['item'] = $item;
-        $data['method'] = $method;
-        return view('master_items.form.index', $data);
+        $item = ($method == 'edit') 
+            ? MasterItem::with('categories')->findOrFail($id) // eager load categories
+            : null;
+
+        // ambil semua kategori dari database (untuk multi-select dropdown)
+        $categories = Category::all();
+
+        // kirim ke view
+        return view('master_items.form.index', [
+            'item' => $item,
+            'method' => $method,
+            'categories' => $categories,
+        ]);
     }
 
     public function singleView($kode)
@@ -56,10 +85,8 @@ class MasterItemsController extends Controller
     {
         if ($method == 'new') {
             $data_item = new MasterItem;
-            $kode = MasterItem::count('id');
-            $kode = $kode + 1;
+            $kode = MasterItem::count('id') + 1;
             $kode = str_pad($kode, 5, '0', STR_PAD_LEFT);
-            sleep(3);
         } else {
             $data_item = MasterItem::find($id);
             $kode = $data_item->kode;
@@ -71,7 +98,22 @@ class MasterItemsController extends Controller
         $data_item->kode = $kode;
         $data_item->supplier = $request->supplier;
         $data_item->jenis = $request->jenis;
+
+        // upload gambar
+        if ($request->hasFile('gambar')) {
+            // hapus gambar lama saat edit
+            if ($method == 'edit' && $data_item->gambar) {
+                Storage::disk('public')->delete($data_item->gambar);
+            }
+
+            $path = $request->file('gambar')->store('master-items', 'public');
+            $data_item->gambar = $path;
+        }
+
         $data_item->save();
+
+        $selectedCategories = $request->categories ?? [];
+        $data_item->categories()->sync($selectedCategories);
 
         return redirect('master-items');
     }
@@ -97,6 +139,11 @@ class MasterItemsController extends Controller
             $item->jenis = $this->getRandomJenis();
             $item->save();
         }
+    }
+
+    public function exportExcel()
+    {
+        return Excel::download(new MasterItemsExport, 'master_items.xlsx');
     }
 
     private function getRandomSupplier()

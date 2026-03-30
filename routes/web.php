@@ -1,6 +1,8 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\CategoriesController;
+use App\Http\Controllers\MasterItemController;
 
 /*
 |--------------------------------------------------------------------------
@@ -31,3 +33,7 @@ Route::get('/master-items/delete/{id}', [App\Http\Controllers\MasterItemsControl
 
 
 Route::get('/master-items/update-random-data', [App\Http\Controllers\MasterItemsController::class, 'updateRandomData']);
+
+Route::resource('categories', CategoriesController::class);
+Route::get('categories/{id}/pdf', [CategoriesController::class, 'exportPdf'])->name('categories.pdf');
+Route::get('master-items/export/excel', [MasterItemController::class, 'exportExcel'])->name('master-items.excel');
